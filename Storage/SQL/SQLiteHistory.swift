@@ -5,6 +5,7 @@
 import Foundation
 import Shared
 import XCGLogger
+import Deferred
 
 private let log = Logger.syncLogger
 
@@ -105,14 +106,14 @@ public class SQLiteHistory {
     let favicons: FaviconsTable<Favicon>
     let prefs: Prefs
 
-    required public init?(db: BrowserDB, prefs: Prefs, version: Int? = nil) {
+    required public init?(db: BrowserDB, prefs: Prefs) {
         self.db = db
         self.favicons = FaviconsTable<Favicon>()
         self.prefs = prefs
 
         // BrowserTable exists only to perform create/update etc. operations -- it's not
         // a queryable thing that needs to stick around.
-        if !db.createOrUpdate(BrowserTable(version: version ?? BrowserTable.DefaultVersion)) {
+        if !db.createOrUpdate(BrowserTable()) {
             return nil
         }
     }
@@ -122,6 +123,7 @@ extension SQLiteHistory: BrowserHistory {
     public func removeSiteFromTopSites(site: Site) -> Success {
         if let host = site.url.asURL?.normalizedHost() {
             return db.run([("UPDATE \(TableDomains) set showOnTopSites = 0 WHERE domain = ?", [host])])
+                >>> { return self.refreshTopSitesCache() }
         }
         return deferMaybe(DatabaseError(description: "Invalid url for site \(site.url)"))
     }
@@ -289,8 +291,7 @@ extension SQLiteHistory: BrowserHistory {
 
     public func refreshTopSitesCache() -> Success {
         let cacheSize = Int(prefs.intForKey(PrefsKeys.KeyTopSitesCacheSize) ?? 0)
-        return self.clearTopSitesCache()
-            >>> { self.updateTopSitesCacheWithLimit(cacheSize) }
+        return updateTopSitesCacheWithLimit(cacheSize)
     }
 
     private func updateTopSitesCacheWithLimit(limit : Int) -> Success {
@@ -298,10 +299,10 @@ extension SQLiteHistory: BrowserHistory {
         let (query, args) = self.filteredSitesByFrecencyQueryWithLimit(limit, groupClause: groupBy, whereData: whereData)
         let insertQuery = "INSERT INTO \(TableCachedTopSites) \(query)"
         return self.clearTopSitesCache() >>> {
-            self.db.run(insertQuery, withArgs: args) >>> {
-                self.prefs.setBool(true, forKey: PrefsKeys.KeyTopSitesCacheIsValid)
-                return succeed()
-            }
+            return self.db.run(insertQuery, withArgs: args)
+        } >>> {
+            self.prefs.setBool(true, forKey: PrefsKeys.KeyTopSitesCacheIsValid)
+            return succeed()
         }
     }
 
@@ -367,20 +368,61 @@ extension SQLiteHistory: BrowserHistory {
         return (whereData, groupBy)
     }
 
+    private func computeWordsWithFilter(filter: String) -> [String] {
+        // Split filter on whitespace.
+        let words = filter.componentsSeparatedByCharactersInSet(NSCharacterSet.whitespaceCharacterSet())
+
+        // Remove substrings and duplicates.
+        // TODO: this can probably be improved.
+        return words.enumerate().filter({ (index: Int, word: String) in
+            if word.isEmpty {
+                return false
+            }
+
+            for i in words.indices where i != index {
+                if words[i].rangeOfString(word) != nil && (words[i].characters.count != word.characters.count || i < index) {
+                    return false
+                }
+            }
+
+            return true
+        }).map({ $0.1 })
+    }
+
+    /**
+     * Take input like "foo bar" and a template fragment and produce output like
+     *
+     *   ((x.y LIKE ?) OR (x.z LIKE ?)) AND ((x.y LIKE ?) OR (x.z LIKE ?))
+     *
+     * with args ["foo", "foo", "bar", "bar"].
+     */
+    internal func computeWhereFragmentWithFilter(filter: String, perWordFragment: String, perWordArgs: String -> Args) -> (fragment: String, args: Args) {
+        precondition(!filter.isEmpty)
+
+        let words = computeWordsWithFilter(filter)
+        assert(!words.isEmpty)
+
+        let fragment = Array(count: words.count, repeatedValue: perWordFragment).joinWithSeparator(" AND ")
+        let args = words.flatMap(perWordArgs)
+        return (fragment, args)
+    }
+
     private func getFilteredSitesByVisitDateWithLimit(limit: Int,
                                                       whereURLContains filter: String? = nil,
                                                       includeIcon: Bool = true) -> Deferred<Maybe<Cursor<Site>>> {
         let args: Args?
         let whereClause: String
-        if let filter = filter {
-            args = ["%\(filter)%", "%\(filter)%"]
+        if let filter = filter?.stringByTrimmingCharactersInSet(NSCharacterSet.whitespaceCharacterSet()) where !filter.isEmpty {
+            let perWordFragment = "((\(TableHistory).url LIKE ?) OR (\(TableHistory).title LIKE ?))"
+            let perWordArgs: String -> Args = { ["%\($0)%", "%\($0)%"] }
+            let (filterFragment, filterArgs) = computeWhereFragmentWithFilter(filter, perWordFragment: perWordFragment, perWordArgs: perWordArgs)
 
             // No deleted item has a URL, so there is no need to explicitly add that here.
-            whereClause = "WHERE ((\(TableHistory).url LIKE ?) OR (\(TableHistory).title LIKE ?)) " +
-                          "AND (\(TableHistory).is_deleted = 0)"
+            whereClause = "WHERE (\(filterFragment))"
+            args = filterArgs
         } else {
-            args = []
             whereClause = "WHERE (\(TableHistory).is_deleted = 0)"
+            args = []
         }
 
         let ungroupedSQL =
@@ -455,14 +497,18 @@ extension SQLiteHistory: BrowserHistory {
         let args: Args?
         let whereClause: String
         let whereFragment = (whereData == nil) ? "" : " AND (\(whereData!))"
-        if let filter = filter {
-            args = ["%\(filter)%", "%\(filter)%"]
+
+        if let filter = filter?.stringByTrimmingCharactersInSet(NSCharacterSet.whitespaceCharacterSet()) where !filter.isEmpty {
+            let perWordFragment = "((\(TableHistory).url LIKE ?) OR (\(TableHistory).title LIKE ?))"
+            let perWordArgs: String -> Args = { ["%\($0)%", "%\($0)%"] }
+            let (filterFragment, filterArgs) = computeWhereFragmentWithFilter(filter, perWordFragment: perWordFragment, perWordArgs: perWordArgs)
 
             // No deleted item has a URL, so there is no need to explicitly add that here.
-            whereClause = " WHERE ((\(TableHistory).url LIKE ?) OR (\(TableHistory).title LIKE ?)) \(whereFragment)"
+            whereClause = "WHERE (\(filterFragment))\(whereFragment)"
+            args = filterArgs
         } else {
+            whereClause = " WHERE (\(TableHistory).is_deleted = 0)\(whereFragment)"
             args = []
-            whereClause = " WHERE (\(TableHistory).is_deleted = 0) \(whereFragment)"
         }
 
         // Innermost: grab history items and basic visit/domain metadata.
@@ -531,7 +577,15 @@ extension SQLiteHistory: Favicons {
     }
 
     func getFaviconsForBookmarkedURL(url: String) -> Deferred<Maybe<Cursor<Favicon?>>> {
-        let sql = "SELECT \(TableFavicons).id AS id, \(TableFavicons).url AS url, \(TableFavicons).date AS date, \(TableFavicons).type AS type, \(TableFavicons).width AS width FROM \(TableFavicons), \(TableBookmarks) WHERE \(TableBookmarks).faviconID = \(TableFavicons).id AND \(TableBookmarks).url IS ?"
+        let sql =
+        "SELECT " +
+        "  \(TableFavicons).id AS id" +
+        ", \(TableFavicons).url AS url" +
+        ", \(TableFavicons).date AS date" +
+        ", \(TableFavicons).type AS type" +
+        ", \(TableFavicons).width AS width" +
+        " FROM \(TableFavicons), \(ViewBookmarksLocalOnMirror) AS bm" +
+        " WHERE bm.faviconID = \(TableFavicons).id AND bm.bmkUri IS ?"
         let args: Args = [url]
         return db.runQuery(sql, args: args, factory: SQLiteHistory.iconColumnFactory)
     }
@@ -585,10 +639,12 @@ extension SQLiteHistory: Favicons {
                     return 0
                 }
 
-                // Try to update the favicon ID column in the bookmarks table as well for this favicon
-                // if this site has been bookmarked
+                // Try to update the favicon ID column in each bookmarks table. There can be
+                // multiple bookmarks with a particular URI, and a mirror bookmark can be
+                // locally changed, so either or both of these statements can update multiple rows.
                 if let id = id {
-                    conn.executeChange("UPDATE \(TableBookmarks) SET faviconID = ? WHERE url = ?", withArgs: [id, site.url])
+                    conn.executeChange("UPDATE \(TableBookmarksLocal) SET faviconID = ? WHERE bmkUri = ?", withArgs: [id, site.url])
+                    conn.executeChange("UPDATE \(TableBookmarksMirror) SET faviconID = ? WHERE bmkUri = ?", withArgs: [id, site.url])
                 }
 
                 return id ?? 0
@@ -937,6 +993,16 @@ extension SQLiteHistory: SyncableHistory {
     public func doneUpdatingMetadataAfterUpload() -> Success {
         self.db.checkpoint()
         return succeed()
+    }
+}
+
+extension SQLiteHistory {
+    // Returns a deferred `true` if there are rows in the DB that have a server_modified time.
+    // Because we clear this when we reset or remove the account, and never set server_modified
+    // without syncing, the presence of matching rows directly indicates that a deletion
+    // would be synced to the server.
+    public func hasSyncedHistory() -> Deferred<Maybe<Bool>> {
+        return self.db.queryReturnsResults("SELECT 1 FROM \(TableHistory) WHERE server_modified IS NOT NULL LIMIT 1")
     }
 }
 

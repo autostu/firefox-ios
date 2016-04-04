@@ -8,13 +8,12 @@ import Shared
 struct ThumbnailCellUX {
     /// Ratio of width:height of the thumbnail image.
     static let ImageAspectRatio: Float = 1.0
-    static let TextSize = UIConstants.DefaultSmallFontSize
     static let BorderColor = UIColor.blackColor().colorWithAlphaComponent(0.1)
     static let BorderWidth: CGFloat = 1
-    static let LabelFont = UIConstants.DefaultSmallFont
     static let LabelColor = UIAccessibilityDarkerSystemColorsEnabled() ? UIColor.blackColor() : UIColor(rgb: 0x353535)
     static let LabelBackgroundColor = UIColor(white: 1.0, alpha: 0.5)
     static let LabelAlignment: NSTextAlignment = .Center
+    static let SelectedOverlayColor = UIColor(white: 0.0, alpha: 0.25)
     static let InsetSize: CGFloat = 20
     static let InsetSizeCompact: CGFloat = 6
     static func insetsForCollectionViewSize(size: CGSize, traitCollection: UITraitCollection) -> UIEdgeInsets {
@@ -87,12 +86,20 @@ class ThumbnailCell: UICollectionViewCell {
 
     var imagePadding: CGFloat = 0 {
         didSet {
+            // Find out if our image is going to have fractional pixel width.
+            // If so, we inset by a tiny extra amount to get it down to an integer for better
+            // image scaling.
+            let parentWidth = self.imageWrapper.frame.width
+            let width = (parentWidth - imagePadding)
+            let fractionalW = width - floor(width)
+            let additionalW = fractionalW / 2
+
             imageView.snp_remakeConstraints { make in
                 let insets = UIEdgeInsets(top: imagePadding, left: imagePadding, bottom: imagePadding, right: imagePadding)
                 make.top.equalTo(self.imageWrapper).inset(insets.top)
-                make.left.equalTo(self.imageWrapper).inset(insets.left)
-                make.right.equalTo(self.imageWrapper).inset(insets.right)
                 make.bottom.equalTo(textWrapper.snp_top).offset(-imagePadding)
+                make.left.equalTo(self.imageWrapper).inset(insets.left + additionalW)
+                make.right.equalTo(self.imageWrapper).inset(insets.right + additionalW)
             }
             imageView.setNeedsUpdateConstraints()
         }
@@ -120,7 +127,7 @@ class ThumbnailCell: UICollectionViewCell {
     }
 
     lazy var longPressGesture: UILongPressGestureRecognizer = {
-        return UILongPressGestureRecognizer(target: self, action: "SELdidLongPress")
+        return UILongPressGestureRecognizer(target: self, action: #selector(ThumbnailCell.SELdidLongPress))
     }()
 
     lazy var textWrapper: UIView = {
@@ -132,7 +139,7 @@ class ThumbnailCell: UICollectionViewCell {
     lazy var textLabel: UILabel = {
         let textLabel = UILabel()
         textLabel.setContentHuggingPriority(1000, forAxis: UILayoutConstraintAxis.Vertical)
-        textLabel.font = ThumbnailCellUX.LabelFont
+        textLabel.font = DynamicFontHelper.defaultHelper.DefaultSmallFont
         textLabel.textColor = ThumbnailCellUX.LabelColor
         textLabel.textAlignment = ThumbnailCellUX.LabelAlignment
         return textLabel
@@ -159,8 +166,9 @@ class ThumbnailCell: UICollectionViewCell {
 
     lazy var removeButton: UIButton = {
         let removeButton = UIButton()
+        removeButton.exclusiveTouch = true
         removeButton.setImage(UIImage(named: "TileCloseButton"), forState: UIControlState.Normal)
-        removeButton.addTarget(self, action: "SELdidRemove", forControlEvents: UIControlEvents.TouchUpInside)
+        removeButton.addTarget(self, action: #selector(ThumbnailCell.SELdidRemove), forControlEvents: UIControlEvents.TouchUpInside)
         removeButton.accessibilityLabel = NSLocalizedString("Remove page", comment: "Button shown in editing mode to remove this site from the top sites panel.")
         removeButton.hidden = true
         removeButton.imageEdgeInsets = ThumbnailCellUX.RemoveButtonInsets
@@ -172,6 +180,19 @@ class ThumbnailCell: UICollectionViewCell {
         backgroundImage.contentMode = UIViewContentMode.ScaleAspectFill
         return backgroundImage
     }()
+
+    lazy var selectedOverlay: UIView = {
+        let selectedOverlay = UIView()
+        selectedOverlay.backgroundColor = ThumbnailCellUX.SelectedOverlayColor
+        selectedOverlay.hidden = true
+        return selectedOverlay
+    }()
+
+    override var selected: Bool {
+        didSet {
+            self.selectedOverlay.hidden = !selected
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -189,12 +210,17 @@ class ThumbnailCell: UICollectionViewCell {
         }
         imageWrapper.addSubview(imageView)
         imageWrapper.addSubview(textWrapper)
+        imageWrapper.addSubview(selectedOverlay)
         textWrapper.addSubview(textLabel)
         contentView.addSubview(removeButton)
 
         textWrapper.snp_makeConstraints { make in
             make.bottom.equalTo(self.imageWrapper.snp_bottom) // .offset(ThumbnailCellUX.BorderWidth)
             make.left.right.equalTo(self.imageWrapper) // .offset(ThumbnailCellUX.BorderWidth)
+        }
+
+        selectedOverlay.snp_makeConstraints { make in
+            make.edges.equalTo(self.imageWrapper)
         }
 
         textLabel.snp_remakeConstraints { make in
@@ -227,6 +253,7 @@ class ThumbnailCell: UICollectionViewCell {
         backgroundImage.image = nil
         removeButton.hidden = true
         imageWrapper.backgroundColor = UIColor.clearColor()
+        textLabel.font = DynamicFontHelper.defaultHelper.DefaultSmallFont
     }
 
     func SELdidRemove() {
@@ -269,7 +296,7 @@ class ThumbnailCell: UICollectionViewCell {
 
      - parameter size: Size of the container collection view
      */
-    func updateLayoutForCollectionViewSize(size: CGSize, traitCollection: UITraitCollection) {
+    func updateLayoutForCollectionViewSize(size: CGSize, traitCollection: UITraitCollection, forSuggestedSite: Bool) {
         let cellInsets = ThumbnailCellUX.insetsForCollectionViewSize(size,
             traitCollection: traitCollection)
         let imageInsets = ThumbnailCellUX.imageInsetsForCollectionViewSize(size,
@@ -280,6 +307,11 @@ class ThumbnailCell: UICollectionViewCell {
             imageWrapper.snp_remakeConstraints { make in
                 make.edges.equalTo(self.contentView).inset(cellInsets)
             }
+        }
+
+        if forSuggestedSite {
+            self.imagePadding = 0.0
+            return
         }
 
         if imageInsets != self.imageInsets {

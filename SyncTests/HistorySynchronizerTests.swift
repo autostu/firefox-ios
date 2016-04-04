@@ -4,7 +4,10 @@
 
 import Shared
 import Storage
+@testable import Sync
 import XCGLogger
+import Deferred
+
 import XCTest
 
 private let log = Logger.syncLogger
@@ -56,6 +59,11 @@ extension MockSyncableHistory: SyncableHistory {
         self.places.removeValueForKey(guid)
 
         return succeed()
+    }
+
+    func hasSyncedHistory() -> Deferred<Maybe<Bool>> {
+        let has = self.places.values.contains({ $0.serverModified != nil })
+        return deferMaybe(has)
     }
 
     /**

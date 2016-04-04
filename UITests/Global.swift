@@ -3,17 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import Foundation
+import GCDWebServers
 import Storage
 import WebKit
 
 let LabelAddressAndSearch = "Address and Search"
 
 extension XCTestCase {
-    func tester(file: String = __FILE__, _ line: Int = __LINE__) -> KIFUITestActor {
+    func tester(file: String = #file, _ line: Int = #line) -> KIFUITestActor {
         return KIFUITestActor(inFile: file, atLine: line, delegate: self)
     }
 
-    func system(file: String = __FILE__, _ line: Int = __LINE__) -> KIFSystemTestActor {
+    func system(file: String = #file, _ line: Int = #line) -> KIFSystemTestActor {
         return KIFSystemTestActor(inFile: file, atLine: line, delegate: self)
     }
 }
@@ -43,6 +44,13 @@ extension KIFUITestActor {
         } catch {
             return false
         }
+    }
+
+    func viewExistsWithLabelPrefixedBy(prefix: String) -> Bool {
+        let element = UIApplication.sharedApplication().accessibilityElementMatchingBlock { element in
+            return element.accessibilityLabel?.hasPrefix(prefix) ?? false
+        }
+        return element != nil
     }
 
     /// Waits for and returns a view with the given accessibility value.
@@ -103,8 +111,13 @@ extension KIFUITestActor {
      * elements with the given textContent or title.
      */
     func waitForWebViewElementWithAccessibilityLabel(text: String) {
-        let success = hasWebViewElementWithAccessibilityLabel(text)
-        XCTAssert(success, "Found accessibility label in webview: \(text)")
+        runBlock { error in
+            if (self.hasWebViewElementWithAccessibilityLabel(text)) {
+                return KIFTestStepResult.Success
+            }
+
+            return KIFTestStepResult.Wait
+        }
     }
 
     /**
@@ -157,7 +170,7 @@ extension KIFUITestActor {
 
         let escaped = text.stringByReplacingOccurrencesOfString("\"", withString: "\\\"")
         webView.evaluateJavaScript("KIFHelper.hasElementWithAccessibilityLabel(\"\(escaped)\")") { success, _ in
-            found = success as! Bool
+            found = success as? Bool ?? false
             stepResult = KIFTestStepResult.Success
         }
 
@@ -209,7 +222,12 @@ class BrowserUtils {
 
         // Clear all private tabs if we're running iOS 9
         if #available(iOS 9, *) {
-            tester.tapViewWithAccessibilityLabel("Private Mode")
+            // Switch to Private Mode if we're not in it already.
+            do {
+                try tester.tryFindingTappableViewWithAccessibilityLabel("Private Mode", value: "Off", traits: UIAccessibilityTraitButton)
+                tester.tapViewWithAccessibilityLabel("Private Mode")
+            } catch _ {}
+
             while tabsView.numberOfItemsInSection(0) > 0 {
                 let cell = tabsView.cellForItemAtIndexPath(NSIndexPath(forItem: 0, inSection: 0))!
                 tester.swipeViewWithAccessibilityLabel(cell.accessibilityLabel, inDirection: KIFSwipeDirection.Left)
@@ -258,8 +276,11 @@ class BrowserUtils {
         for _ in 0 ..< historyTable.numberOfSections {
             for _ in 0 ..< historyTable.numberOfRowsInSection(0) {
                 clearHistoryItemAtIndex(NSIndexPath(forRow: 0, inSection: 0), tester: tester)
-                if numberOfTests > -1 && ++index == numberOfTests {
-                    return
+                if numberOfTests > -1 {
+                    index += 1
+                    if index == numberOfTests {
+                        return
+                    }
                 }
             }
         }
@@ -317,7 +338,7 @@ class SimplePageServer {
             return GCDWebServerDataResponse(data: img, contentType: "image/png")
         }
 
-        for page in ["noTitle", "readablePage"] {
+        for page in ["findPage", "noTitle", "readablePage", "JSPrompt"] {
             webServer.addHandlerForMethod("GET", path: "/\(page).html", requestClass: GCDWebServerRequest.self) { (request) -> GCDWebServerResponse! in
                 return GCDWebServerDataResponse(HTML: self.getPageData(page))
             }
@@ -346,6 +367,23 @@ class SimplePageServer {
 
         webServer.addHandlerForMethod("GET", path: "/loginForm.html", requestClass: GCDWebServerRequest.self) { _ in
             return GCDWebServerDataResponse(HTML: self.getPageData("loginForm"))
+        }
+
+        webServer.addHandlerForMethod("GET", path: "/auth.html", requestClass: GCDWebServerRequest.self) { (request: GCDWebServerRequest!) in
+            // "user:pass", Base64-encoded.
+            let expectedAuth = "Basic dXNlcjpwYXNz"
+
+            let response: GCDWebServerDataResponse
+            if request.headers["Authorization"] as? String == expectedAuth && request.query["logout"] == nil {
+                response = GCDWebServerDataResponse(HTML: "<html><body>logged in</body></html>")
+            } else {
+                // Request credentials if the user isn't logged in.
+                response = GCDWebServerDataResponse(HTML: "<html><body>auth fail</body></html>")
+                response.statusCode = 401
+                response.setValue("Basic realm=\"test\"", forAdditionalHeader: "WWW-Authenticate")
+            }
+
+            return response
         }
 
         if !webServer.startWithPort(0, bonjourName: nil) {
@@ -388,5 +426,26 @@ class SearchUtils {
     static func getDefaultSearchEngineName(tester: KIFUITestActor) -> String {
         let view = tester.waitForCellWithAccessibilityLabel("Default Search Engine")
         return view.accessibilityValue!
+    }
+}
+
+class DynamicFontUtils {
+    // Need to leave time for the notification to propagate
+    static func bumpDynamicFontSize(tester: KIFUITestActor) {
+        let value = UIContentSizeCategoryAccessibilityExtraLarge
+        UIApplication.sharedApplication().setValue(value, forKey: "preferredContentSizeCategory")
+        tester.waitForTimeInterval(0.3)
+    }
+
+    static func lowerDynamicFontSize(tester: KIFUITestActor) {
+        let value = UIContentSizeCategoryExtraSmall
+        UIApplication.sharedApplication().setValue(value, forKey: "preferredContentSizeCategory")
+        tester.waitForTimeInterval(0.3)
+    }
+
+    static func restoreDynamicFontSize(tester: KIFUITestActor) {
+        let value = UIContentSizeCategoryMedium
+        UIApplication.sharedApplication().setValue(value, forKey: "preferredContentSizeCategory")
+        tester.waitForTimeInterval(0.3)
     }
 }

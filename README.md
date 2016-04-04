@@ -1,10 +1,16 @@
-Firefox for iOS
+Firefox for iOS [![codebeat badge](https://codebeat.co/badges/67e58b6d-bc89-4f22-ba8f-7668a9c15c5a)](https://codebeat.co/projects/github-com-mozilla-firefox-ios)
 ===============
+
+Download on the [App Store](https://itunes.apple.com/app/firefox-web-browser/id989804926).
 
 This branch
 -----------
 
-This branch is targeting iOS 9, uses Swift 2.0, and is slated to become v1.1 and later. See the __v1.0__ branch if you're doing work for a 1.0.\* release.
+This branch is for mainline development that will eventually ship as v4.0.
+
+See the __v3.x__ branch if you're doing stabilization work for v3.0. If you are interested in fixing a bug on the __v3.x__ stabilization branch, take a look at the list of open bugs that are marked as [tracking 3.0](https://wiki.mozilla.org/Mobile/Triage#iOS_Tracking_3.0.2B).
+
+This branch works with Xcode 7.2.1, and supports iOS 8.2 and 9.x. Although you can only run and debug from Xcode on a 9.2.1 device.
 
 Please make sure you aim your pull requests in the right direction.
 
@@ -27,10 +33,16 @@ https://mozilla.invisionapp.com/share/HA254M642#/screens/63057282?maintainScroll
 Building the code
 -----------------
 
-> __As of August 28, 2015, this project requires Xcode 7 beta 6.__
+> __As of March 28, 2016, this project requires Xcode 7.3.__
 
 1. Install the latest [Xcode developer tools](https://developer.apple.com/xcode/downloads/) from Apple.
-1. Install [Carthage](https://github.com/Carthage/Carthage#installing-carthage).
+1. Install Carthage
+
+  ```shell
+  brew update
+  brew install carthage
+  ```
+
 1. Clone the repository:
 
   ```shell
@@ -41,18 +53,18 @@ Building the code
 
   ```shell
   cd firefox-ios
-  sh ./checkout.sh
+  sh ./bootstrap.sh
   ```
 
 1. Open `Client.xcodeproj` in Xcode.
-1. Build the `Client` scheme in Xcode.
+1. Build the `Fennec` scheme in Xcode.
 
 It is possible to use [App Code](https://www.jetbrains.com/objc/download/) instead of Xcode, but you will still require the Xcode developer tools.
 
 ## Contributor guidelines
 
 ### Creating a pull request
-* All pull requests must be associated with a specific bug in [Bugzilla](http://bugzilla.mozilla.org).
+* All pull requests must be associated with a specific bug in [Bugzilla](https://bugzilla.mozilla.org/).
  * If a bug corresponding to the fix does not yet exist, please [file it](https://bugzilla.mozilla.org/enter_bug.cgi?op_sys=iOS&product=Firefox%20for%20iOS&rep_platform=All).
  * You'll need to be logged in to create/update bugs, but note that Bugzilla allows you to sign in with your GitHub account.
 * Use the bug number/title as the name of pull request. For example, a pull request for [bug 1135920](https://bugzilla.mozilla.org/show_bug.cgi?id=1135920) would be titled "Bug 1135920 - Create a top sites panel".
@@ -78,26 +90,3 @@ It is possible to use [App Code](https://www.jetbrains.com/objc/download/) inste
 * Each commit should have a single clear purpose. If a commit contains multiple unrelated changes, those changes should be split into separate commits.
 * If a commit requires another commit to build properly, those commits should be squashed.
 * Follow-up commits for any review comments should be squashed. Do not include "Fixed PR comments", merge commits, or other "temporary" commits in pull requests.
-
-Adding new dependencies with Carthage
--------------------------------------
-
-Notes from Stefan:
-
-Usually Carthage is used to compile frameworks and then include the (compiled) binary frameworks in your app. When you do this, the frameworks do not need to be signed by Carthage. Instead, at the end of building the your application, xcode will simply sign all the embedded resources, frameworks included. So as long as signing works for your app, it will work for frameworks imported with Carthage.
-
-But, because not all Carthage dependencies can be compiled to frameworks yet, we currently include them as source. This means they become dependent projects of our application, which in turn means that they are built *and signed* individually as part of the build process of our app.
-
-Now this is where it gets tricky. Because code signing on iOS can get really tedious to get right. Small mistakes in dependent projects can turn into issues about code signing identities, missing provisioning profiles, etc.
-
-For example:
-
-If a dependent project has a team identifier set, Xcode will complain that it cannot find signin identities of that team. It is best to set the team to None.
-
-If a dependent project is configured to use a Distribution Code Signing Identity for a Release build, Xcode will complain that such a profile is not available. (Since we only have development profiles on our workstations). It is best to configure both Debug and Release Build Configurations to use the automatic "iPhone Developer" Code Signing Identity. This will pick the right thing on your local build.
-
-Most of this is fixable and can be reported upstream.
-
-If you add a new dependency, ping @st3fan and he'll make sure things work correctly on our integration (xcode server) and dogfood builders.
-
-A command exists to make adding dependencies less painful: `./update.sh`.

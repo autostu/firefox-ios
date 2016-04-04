@@ -16,6 +16,7 @@ public enum NSFileManagerExtensionsErrorCodes: Int {
 }
 
 public extension NSFileManager {
+
     private func directoryEnumeratorForURL(url: NSURL) throws -> NSDirectoryEnumerator {
         let prefetchedProperties = [
             NSURLIsRegularFileKey,
@@ -55,10 +56,7 @@ public extension NSFileManager {
             return 0
         }
 
-        // First try to get the total allocated size and in failing that, get the file allocated size
-        return itemURL.getResourceLongLongForKey(NSURLTotalFileAllocatedSizeKey)
-            ?? itemURL.getResourceLongLongForKey(NSURLFileAllocatedSizeKey)
-            ?? 0
+        return (url as? NSURL)?.allocatedFileSize() ?? 0
     }
 
     func allocatedSizeOfDirectoryAtURL(url: NSURL, forFilesPrefixedWith prefix: String, isLargerThanBytes threshold: Int64) throws -> Bool {
@@ -86,6 +84,18 @@ public extension NSFileManager {
         return try directoryEnumerator.reduce(0) {
             let size = try sizeForItemURL($1, withPrefix: prefix)
             return $0 + size
+        }
+    }
+
+    func contentsOfDirectoryAtPath(path: String, withFilenamePrefix prefix: String) throws -> [String] {
+        return try NSFileManager.defaultManager().contentsOfDirectoryAtPath(path)
+            .filter { $0.hasPrefix("\(prefix).") }
+            .sort { $0 < $1 }
+    }
+
+    func removeItemInDirectory(directory: String, named: String) throws {
+        if let file = NSURL.fileURLWithPath(directory).URLByAppendingPathComponent(named).path {
+            try self.removeItemAtPath(file)
         }
     }
 

@@ -49,6 +49,15 @@ public class DeviceInfo {
         return String(format: f, appName(), device)
     }
 
+    public class func clientIdentifier(prefs: Prefs) -> String {
+        if let id = prefs.stringForKey("clientIdentifier") {
+            return id
+        }
+        let id = NSUUID().UUIDString
+        prefs.setString(id, forKey: "clientIdentifier")
+        return id
+    }
+
     public class func deviceModel() -> String {
         return UIDevice.currentDevice().model
     }
@@ -64,5 +73,17 @@ public class DeviceInfo {
         // 2. https://gist.github.com/conradev/8655650
         // Thus, testing has to take place on actual devices.
         return !lowGraphicsQualityModels.contains(specificModelName)
+    }
+
+    public class func hasConnectivity() -> Bool {
+        let status = Reach().connectionStatus()
+        switch status {
+        case .Online(.WWAN):
+            return true
+        case .Online(.WiFi):
+            return true
+        default:
+            return false
+        }
     }
 }

@@ -6,6 +6,9 @@ import Foundation
 import UIKit
 import Shared
 import SnapKit
+import XCGLogger
+
+private let log = Logger.browserLogger
 
 struct URLBarViewUX {
     static let TextFieldBorderColor = UIColor(rgb: 0xBBBBBB)
@@ -26,6 +29,27 @@ struct URLBarViewUX {
     static let TabsButtonRotationOffset: CGFloat = 1.5
     static let TabsButtonHeight: CGFloat = 18.0
     static let ToolbarButtonInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+
+    static let Themes: [String: Theme] = {
+        var themes = [String: Theme]()
+        var theme = Theme()
+        theme.borderColor = UIConstants.PrivateModeLocationBorderColor
+        theme.activeBorderColor = UIConstants.PrivateModePurple
+        theme.tintColor = UIConstants.PrivateModePurple
+        theme.textColor = UIColor.whiteColor()
+        theme.buttonTintColor = UIConstants.PrivateModeActionButtonTintColor
+        themes[Theme.PrivateMode] = theme
+
+        theme = Theme()
+        theme.borderColor = TextFieldBorderColor
+        theme.activeBorderColor = TextFieldActiveBorderColor
+        theme.tintColor = ProgressTintColor
+        theme.textColor = UIColor.blackColor()
+        theme.buttonTintColor = UIColor.darkGrayColor()
+        themes[Theme.NormalMode] = theme
+
+        return themes
+    }()
 
     static func backgroundColorWithAlpha(alpha: CGFloat) -> UIColor {
         return UIConstants.AppBackgroundColor.colorWithAlphaComponent(alpha)
@@ -79,6 +103,8 @@ class URLBarView: UIView {
         }
     }
 
+    private var currentTheme: String = Theme.NormalMode
+
     var toolbarIsShowing = false
 
     private var locationTextField: ToolbarTextField?
@@ -114,7 +140,8 @@ class URLBarView: UIView {
     private lazy var tabsButton: TabsButton = {
         let tabsButton = TabsButton()
         tabsButton.titleLabel.text = "0"
-        tabsButton.addTarget(self, action: "SELdidClickAddTab", forControlEvents: UIControlEvents.TouchUpInside)
+        tabsButton.addTarget(self, action: #selector(URLBarView.SELdidClickAddTab), forControlEvents: UIControlEvents.TouchUpInside)
+        tabsButton.accessibilityIdentifier = "URLBarView.tabsButton"
         tabsButton.accessibilityLabel = NSLocalizedString("Show Tabs", comment: "Accessibility Label for the tabs button in the browser toolbar")
         return tabsButton
     }()
@@ -132,11 +159,12 @@ class URLBarView: UIView {
         cancelButton.setTitleColor(UIColor.blackColor(), forState: UIControlState.Normal)
         let cancelTitle = NSLocalizedString("Cancel", comment: "Button label to cancel entering a URL or search query")
         cancelButton.setTitle(cancelTitle, forState: UIControlState.Normal)
-        cancelButton.titleLabel?.font = UIConstants.DefaultMediumFont
-        cancelButton.addTarget(self, action: "SELdidClickCancel", forControlEvents: UIControlEvents.TouchUpInside)
+        cancelButton.titleLabel?.font = UIConstants.DefaultChromeFont
+        cancelButton.addTarget(self, action: #selector(URLBarView.SELdidClickCancel), forControlEvents: UIControlEvents.TouchUpInside)
         cancelButton.titleEdgeInsets = UIEdgeInsetsMake(10, 12, 10, 12)
         cancelButton.setContentHuggingPriority(1000, forAxis: UILayoutConstraintAxis.Horizontal)
         cancelButton.setContentCompressionResistancePriority(1000, forAxis: UILayoutConstraintAxis.Horizontal)
+        cancelButton.alpha = 0
         return cancelButton
     }()
 
@@ -144,7 +172,7 @@ class URLBarView: UIView {
 
     private lazy var scrollToTopButton: UIButton = {
         let button = UIButton()
-        button.addTarget(self, action: "SELtappedScrollToTopArea", forControlEvents: UIControlEvents.TouchUpInside)
+        button.addTarget(self, action: #selector(URLBarView.SELtappedScrollToTopArea), forControlEvents: UIControlEvents.TouchUpInside)
         return button
     }()
 
@@ -318,8 +346,7 @@ class URLBarView: UIView {
         locationTextField.autocapitalizationType = UITextAutocapitalizationType.None
         locationTextField.returnKeyType = UIReturnKeyType.Go
         locationTextField.clearButtonMode = UITextFieldViewMode.WhileEditing
-        locationTextField.backgroundColor = UIColor.whiteColor()
-        locationTextField.font = UIConstants.DefaultMediumFont
+        locationTextField.font = UIConstants.DefaultChromeFont
         locationTextField.accessibilityIdentifier = "address"
         locationTextField.accessibilityLabel = NSLocalizedString("Address and Search", comment: "Accessibility label for address and search field, both words (Address, Search) are therefore nouns.")
         locationTextField.attributedPlaceholder = self.locationView.placeholder
@@ -329,6 +356,8 @@ class URLBarView: UIView {
         locationTextField.snp_makeConstraints { make in
             make.edges.equalTo(self.locationView.urlTextField)
         }
+
+        locationTextField.applyTheme(currentTheme)
     }
 
     func removeLocationTextField() {
@@ -370,7 +399,7 @@ class URLBarView: UIView {
             // make a 'clone' of the tabs button
             let newTabsButton = self.tabsButton.clone() as! TabsButton
             self.clonedTabsButton = newTabsButton
-            newTabsButton.addTarget(self, action: "SELdidClickAddTab", forControlEvents: UIControlEvents.TouchUpInside)
+            newTabsButton.addTarget(self, action: #selector(URLBarView.SELdidClickAddTab), forControlEvents: UIControlEvents.TouchUpInside)
             newTabsButton.titleLabel.text = count.description
             newTabsButton.accessibilityValue = count.description
             addSubview(newTabsButton)
@@ -701,7 +730,29 @@ extension URLBarView {
         }
     }
 
-   }
+}
+
+extension URLBarView: Themeable {
+    
+    func applyTheme(themeName: String) {
+        locationView.applyTheme(themeName)
+        locationTextField?.applyTheme(themeName)
+
+        guard let theme = URLBarViewUX.Themes[themeName] else {
+            log.error("Unable to apply unknown theme \(themeName)")
+            return
+        }
+
+        currentTheme = themeName
+        locationBorderColor = theme.borderColor!
+        locationActiveBorderColor = theme.activeBorderColor!
+        progressBarTint = theme.tintColor
+        cancelTextColor = theme.textColor
+        actionButtonTintColor = theme.buttonTintColor
+
+        tabsButton.applyTheme(themeName)
+    }
+}
 
 /* Code for drawing the urlbar curve */
 // Curve's aspect ratio
@@ -787,6 +838,24 @@ private class CurveView: UIView {
 }
 
 class ToolbarTextField: AutocompleteTextField {
+    static let Themes: [String: Theme] = {
+        var themes = [String: Theme]()
+        var theme = Theme()
+        theme.backgroundColor = UIConstants.PrivateModeLocationBackgroundColor
+        theme.textColor = UIColor.whiteColor()
+        theme.buttonTintColor = UIColor.whiteColor()
+        theme.highlightColor = UIConstants.PrivateModeTextHighlightColor
+        themes[Theme.PrivateMode] = theme
+
+        theme = Theme()
+        theme.backgroundColor = UIColor.whiteColor()
+        theme.textColor = UIColor.blackColor()
+        theme.highlightColor = AutocompleteTextFieldUX.HighlightColor
+        themes[Theme.NormalMode] = theme
+
+        return themes
+    }()
+
     dynamic var clearButtonTintColor: UIColor? {
         didSet {
             // Clear previous tinted image that's cache and ask for a relayout
@@ -849,5 +918,19 @@ class ToolbarTextField: AutocompleteTextField {
         UIGraphicsEndImageContext()
         
         return tintedImage
+    }
+}
+
+extension ToolbarTextField: Themeable {
+    func applyTheme(themeName: String) {
+        guard let theme = ToolbarTextField.Themes[themeName] else {
+            log.error("Unable to apply unknown theme \(themeName)")
+            return
+        }
+
+        backgroundColor = theme.backgroundColor
+        textColor = theme.textColor
+        clearButtonTintColor = theme.buttonTintColor
+        highlightColor = theme.highlightColor!
     }
 }

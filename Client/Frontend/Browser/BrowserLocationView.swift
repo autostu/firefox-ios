@@ -6,6 +6,9 @@ import Foundation
 import UIKit
 import Shared
 import SnapKit
+import XCGLogger
+
+private let log = Logger.browserLogger
 
 protocol BrowserLocationViewDelegate {
     func browserLocationViewDidTapLocation(browserLocationView: BrowserLocationView)
@@ -22,6 +25,23 @@ struct BrowserLocationViewUX {
     static let BaseURLPitch = 0.75
     static let HostPitch = 1.0
     static let LocationContentInset = 8
+
+    static let Themes: [String: Theme] = {
+        var themes = [String: Theme]()
+        var theme = Theme()
+        theme.URLFontColor = UIColor.lightGrayColor()
+        theme.hostFontColor = UIColor.whiteColor()
+        theme.backgroundColor = UIConstants.PrivateModeLocationBackgroundColor
+        themes[Theme.PrivateMode] = theme
+
+        theme = Theme()
+        theme.URLFontColor = BaseURLFontColor
+        theme.hostFontColor = HostFontColor
+        theme.backgroundColor = UIColor.whiteColor()
+        themes[Theme.NormalMode] = theme
+
+        return themes
+    }()
 }
 
 class BrowserLocationView: UIView {
@@ -93,7 +113,7 @@ class BrowserLocationView: UIView {
         urlTextField.attributedPlaceholder = self.placeholder
         urlTextField.accessibilityIdentifier = "url"
         urlTextField.accessibilityActionsSource = self
-        urlTextField.font = UIConstants.DefaultMediumFont
+        urlTextField.font = UIConstants.DefaultChromeFont
         return urlTextField
     }()
 
@@ -109,21 +129,19 @@ class BrowserLocationView: UIView {
     private lazy var readerModeButton: ReaderModeButton = {
         let readerModeButton = ReaderModeButton(frame: CGRectZero)
         readerModeButton.hidden = true
-        readerModeButton.addTarget(self, action: "SELtapReaderModeButton", forControlEvents: .TouchUpInside)
-        readerModeButton.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: "SELlongPressReaderModeButton:"))
+        readerModeButton.addTarget(self, action: #selector(BrowserLocationView.SELtapReaderModeButton), forControlEvents: .TouchUpInside)
+        readerModeButton.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(BrowserLocationView.SELlongPressReaderModeButton(_:))))
         readerModeButton.isAccessibilityElement = true
         readerModeButton.accessibilityLabel = NSLocalizedString("Reader View", comment: "Accessibility label for the Reader View button")
-        readerModeButton.accessibilityCustomActions = [UIAccessibilityCustomAction(name: NSLocalizedString("Add to Reading List", comment: "Accessibility label for action adding current page to reading list."), target: self, selector: "SELreaderModeCustomAction")]
+        readerModeButton.accessibilityCustomActions = [UIAccessibilityCustomAction(name: NSLocalizedString("Add to Reading List", comment: "Accessibility label for action adding current page to reading list."), target: self, selector: #selector(BrowserLocationView.SELreaderModeCustomAction))]
         return readerModeButton
     }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
 
-        longPressRecognizer = UILongPressGestureRecognizer(target: self, action: "SELlongPressLocation:")
-        tapRecognizer = UITapGestureRecognizer(target: self, action: "SELtapLocation:")
-
-        self.backgroundColor = UIColor.whiteColor()
+        longPressRecognizer = UILongPressGestureRecognizer(target: self, action: #selector(BrowserLocationView.SELlongPressLocation(_:)))
+        tapRecognizer = UITapGestureRecognizer(target: self, action: #selector(BrowserLocationView.SELtapLocation(_:)))
 
         addSubview(urlTextField)
         addSubview(lockImageView)
@@ -231,6 +249,18 @@ extension BrowserLocationView: AccessibilityActionsSource {
             return delegate?.browserLocationViewLocationAccessibilityActions(self)
         }
         return nil
+    }
+}
+
+extension BrowserLocationView: Themeable {
+    func applyTheme(themeName: String) {
+        guard let theme = BrowserLocationViewUX.Themes[themeName] else {
+            log.error("Unable to apply unknown theme \(themeName)")
+            return
+        }
+        baseURLFontColor = theme.URLFontColor!
+        hostFontColor = theme.hostFontColor!
+        backgroundColor = theme.backgroundColor
     }
 }
 

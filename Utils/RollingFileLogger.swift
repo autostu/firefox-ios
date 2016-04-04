@@ -56,16 +56,27 @@ public class RollingFileLogger: XCGLogger {
         }
     }
 
+    public func logFilenamesAndURLs() throws -> [(String, NSURL)] {
+        guard let logPath = logDirectoryPath else {
+            return []
+        }
+
+        let files = try NSFileManager.defaultManager().contentsOfDirectoryAtPath(logPath, withFilenamePrefix: root)
+        return files.flatMap { filename in
+            if let url = NSURL(string: "\(logPath)/\(filename)") {
+                return (filename, url)
+            }
+            return nil
+        }
+    }
+
     private func deleteOldestLogWithPrefix(prefix: String) {
         if logDirectoryPath == nil {
             return
         }
 
         do {
-            let logFiles = try NSFileManager.defaultManager().contentsOfDirectoryAtPath(logDirectoryPath!)
-                .filter { $0.hasPrefix("\(prefix).") }
-                .sort { $0 < $1 }
-
+            let logFiles = try NSFileManager.defaultManager().contentsOfDirectoryAtPath(logDirectoryPath!, withFilenamePrefix: prefix)
             if let oldestLogFilename = logFiles.first {
                 try NSFileManager.defaultManager().removeItemAtPath("\(logDirectoryPath!)/\(oldestLogFilename)")
             }

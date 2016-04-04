@@ -25,6 +25,14 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
 
     private var completionActive = false
     private var canAutocomplete = true
+
+    // This variable is a solution to get the right behavior for refocusing
+    // the AutocompleteTextField. The initial transition into Overlay Mode 
+    // doesn't involve the user interacting with AutocompleteTextField.
+    // Thus, we update shouldApplyCompletion in touchesBegin() to reflect whether
+    // the highlight is active and then the text field is updated accordingly
+    // in touchesEnd() (eg. applyCompletion() is called or not)
+    private var shouldApplyCompletion = false
     private var enteredText = ""
     private var previousSuggestion = ""
     private var notifyTextChanged: (() -> ())? = nil
@@ -40,6 +48,10 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
                 attributedText = attributedString
             }
         }
+    }
+
+    var normalizedEnteredText: String {
+        return enteredText.lowercaseString.stringByTrimmingLeadingCharactersInSet(NSCharacterSet.whitespaceCharacterSet())
     }
 
     override var text: String? {
@@ -61,10 +73,10 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
 
     private func commonInit() {
         super.delegate = self
-        super.addTarget(self, action: "SELtextDidChange:", forControlEvents: UIControlEvents.EditingChanged)
+        super.addTarget(self, action: #selector(AutocompleteTextField.SELtextDidChange(_:)), forControlEvents: UIControlEvents.EditingChanged)
         notifyTextChanged = debounce(0.1, action: {
             if self.editing {
-                self.autocompleteDelegate?.autocompleteTextField(self, didEnterText: self.enteredText)
+                self.autocompleteDelegate?.autocompleteTextField(self, didEnterText: self.enteredText.stringByTrimmingLeadingCharactersInSet(NSCharacterSet.whitespaceCharacterSet()))
             }
         })
     }
@@ -134,7 +146,7 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
     private func removeCompletionIfRequiredForEnteredString(string: String) {
         // If user-entered text does not start with previous suggestion then remove the completion.
         let actualEnteredString = enteredText + string
-        if !previousSuggestion.startsWith(actualEnteredString) {
+        if !previousSuggestion.startsWith(normalizedEnteredText) {
             removeCompletion()
         }
         enteredText = actualEnteredString
@@ -148,9 +160,9 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
             // Check that the length of the entered text is shorter than the length of the suggestion.
             // This ensures that completionActive is true only if there are remaining characters to
             // suggest (which will suppress the caret).
-            if suggestion.startsWith(enteredText) && (enteredText).characters.count < suggestion.characters.count {
-                let endingString = suggestion.substringFromIndex(suggestion.startIndex.advancedBy(enteredText.characters.count))
-                let completedAndMarkedString = NSMutableAttributedString(string: suggestion)
+            if suggestion.startsWith(normalizedEnteredText) && normalizedEnteredText.characters.count < suggestion.characters.count {
+                let endingString = suggestion.substringFromIndex(suggestion.startIndex.advancedBy(normalizedEnteredText.characters.count))
+                let completedAndMarkedString = NSMutableAttributedString(string: enteredText + endingString)
                 completedAndMarkedString.addAttribute(NSBackgroundColorAttributeName, value: highlightColor, range: NSMakeRange(enteredText.characters.count, endingString.characters.count))
                 attributedText = completedAndMarkedString
                 completionActive = true
@@ -209,6 +221,7 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
     }
 
     override func touchesBegan(touches: Set<UITouch>, withEvent event: UIEvent?) {
+        shouldApplyCompletion = completionActive
         if !completionActive {
             super.touchesBegan(touches, withEvent: event)
         }
@@ -221,13 +234,15 @@ class AutocompleteTextField: UITextField, UITextFieldDelegate {
     }
 
     override func touchesEnded(touches: Set<UITouch>, withEvent event: UIEvent?) {
-        if !completionActive {
+        if !shouldApplyCompletion {
             super.touchesEnded(touches, withEvent: event)
         } else {
             applyCompletion()
 
             // Set the current position to the end of the text.
             selectedTextRange = textRangeFromPosition(endOfDocument, toPosition: endOfDocument)
+
+            shouldApplyCompletion = !shouldApplyCompletion
         }
     }
 }
